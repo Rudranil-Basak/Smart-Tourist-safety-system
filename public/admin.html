@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeTravel AI - Authority Emergency Control Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
+    
+    <!-- Top Navbar -->
+    <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-md">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                <i class="fa-solid fa-tower-observation text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-slate-100">Authority Emergency Control Center</h1>
+                <p class="text-xs text-slate-400">Live GIS Tracking & Automated Risk Intelligence</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></span> Live Feed Connected
+            </span>
+        </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Sidebar Monitoring Feed -->
+        <aside class="w-96 bg-slate-900 border-r border-slate-800 flex flex-col">
+            
+            <!-- Emergency SOS Stream -->
+            <div class="p-4 border-b border-slate-800 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xs font-bold text-rose-400 uppercase tracking-wider flex items-center">
+                        <i class="fa-solid fa-triangle-exclamation mr-2 animate-bounce"></i> Emergency SOS Stream
+                    </h2>
+                    <span id="sosCount" class="bg-rose-950 text-rose-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-800">0 Alerts</span>
+                </div>
+                <div id="sosAlertList" class="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <div class="text-xs text-slate-500 text-center py-4 italic">No active emergency alerts.</div>
+                </div>
+            </div>
+
+            <!-- Active Monitored Tourists List -->
+            <div class="flex-1 flex flex-col p-4 overflow-hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center">
+                        <i class="fa-solid fa-users mr-2 text-blue-400"></i> Active Monitored Tourists
+                    </h2>
+                    <span id="activeCount" class="text-xs text-slate-500">0 Active</span>
+                </div>
+                <div id="touristList" class="flex-1 overflow-y-auto space-y-2 pr-1">
+                    <div class="text-xs text-slate-500 text-center py-8 italic">Waiting for registered tourists to connect...</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main GIS Map View -->
+        <main class="flex-1 relative bg-slate-950">
+            <div id="adminMap" class="w-full h-full"></div>
+        </main>
+    </div>
+
+    <script>
+        const socket = io();
+        let adminMap;
+        let touristMarkers = {};
+
+        const geofenceCoords = [
+            [22.5800, 88.3500],
+            [22.5800, 88.3700],
+            [22.5650, 88.3700],
+            [22.5650, 88.3500]
+        ];
+
+        // Initialize Map
+        function initAdminMap() {
+            adminMap = L.map('adminMap').setView([22.5700, 88.3600], 13);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(adminMap);
+
+            // Draw Red Restricted Polygon
+            const polygon = L.polygon(geofenceCoords, {
+                color: '#ef4444',
+                fillColor: '#f87171',
+                fillOpacity: 0.3
+            }).addTo(adminMap);
+            polygon.bindPopup("<b>High-Risk Hazard Geofence Zone</b>");
+        }
+
+        initAdminMap();
+
+        // Listen for Real-Time Tourist Updates
+        socket.on('admin-feed-update', (tourists) => {
+            const listContainer = document.getElementById('touristList');
+            document.getElementById('activeCount').innerText = `${tourists.length} Active`;
+
+            if (tourists.length === 0) {
+                listContainer.innerHTML = `<div class="text-xs text-slate-500 text-center py-8 italic">Waiting for registered tourists to connect...</div>`;
+                return;
+            }
+
+            listContainer.innerHTML = '';
+
+            tourists.forEach(t => {
+                // Determine Risk Styling
+                let badgeClass = "bg-emerald-950 text-emerald-400 border-emerald-800";
+                let statusText = "MODERATE (15)";
+
+                if (t.isInsideRestricted) {
+                    badgeClass = "bg-rose-950 text-rose-400 border-rose-800 animate-pulse";
+                    statusText = "CRITICAL (85)";
+                }
+
+                // Render Sidebar Card
+                const card = document.createElement('div');
+                card.className = "bg-slate-800/60 border border-slate-700/80 rounded-xl p-3 space-y-2 shadow-sm";
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-sm text-slate-200">${t.name}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 border rounded-md ${badgeClass}">${statusText}</span>
+                    </div>
+                    <div class="text-xs text-slate-400 space-y-1">
+                        <div>ID: <span class="font-mono text-slate-300">${t.touristId}</span></div>
+                        <div class="flex items-center text-slate-400">
+                            <i class="fa-solid fa-shield-halved mr-1.5 ${t.isInsideRestricted ? 'text-rose-400' : 'text-emerald-400'}"></i>
+                            <span>${t.status}</span>
+                        </div>
+                    </div>
+                `;
+                listContainer.appendChild(card);
+
+                // Update Map Pins
+                if (touristMarkers[t.touristId]) {
+                    touristMarkers[t.touristId].setLatLng([t.lat, t.lng]);
+                } else {
+                    const marker = L.marker([t.lat, t.lng]).addTo(adminMap);
+                    marker.bindPopup(`<b>${t.name}</b><br>ID: ${t.touristId}<br>Contact: ${t.emergencyContact}`);
+                    touristMarkers[t.touristId] = marker;
+                }
+            });
+        });
+
+        // Listen for Real-Time Emergency SOS Broadcasts
+        let sosCounter = 0;
+        socket.on('emergency-alert', (incident) => {
+            sosCounter++;
+            document.getElementById('sosCount').innerText = `${sosCounter} Alerts`;
+
+            const sosList = document.getElementById('sosAlertList');
+            if (sosCounter === 1) sosList.innerHTML = '';
+
+            const alertCard = document.createElement('div');
+            alertCard.className = "bg-rose-950/80 border border-rose-600 rounded-xl p-3 text-xs text-rose-100 shadow-lg space-y-1";
+            alertCard.innerHTML = `
+                <div class="flex items-center justify-between font-bold text-rose-300">
+                    <span><i class="fa-solid fa-bell mr-1"></i> ACTIVE SOS EMERGENCY</span>
+                    <span class="text-[10px] font-normal text-rose-400">${incident.timestamp}</span>
+                </div>
+                <div><strong>Tourist:</strong> ${incident.name} (${incident.touristId})</div>
+                <div><strong>Emergency Contact:</strong> ${incident.emergencyContact}</div>
+                <div class="text-[11px] font-mono text-rose-300">Coords: ${incident.lat.toFixed(4)}, ${incident.lng.toFixed(4)}</div>
+            `;
+            sosList.prepend(alertCard);
+
+            // Pan map to emergency location
+            adminMap.flyTo([incident.lat, incident.lng], 16, { animate: true });
+        });
+    </script>
+</body>
+</html>

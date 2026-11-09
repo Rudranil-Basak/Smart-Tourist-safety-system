@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeTravel AI - Tourist Mobile Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4 font-sans">
+    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+        
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-blue-700 to-indigo-800 p-5 flex items-center justify-between shadow-md">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-shield-halved text-2xl text-blue-200"></i>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">SafeTravel AI</h1>
+                    <p class="text-xs text-blue-200">Tourist Safety & Incident System</p>
+                </div>
+            </div>
+            <span class="px-2.5 py-1 text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full font-medium">System Online</span>
+        </header>
+
+        <!-- Onboarding Screen -->
+        <div id="registrationCard" class="p-6 space-y-4">
+            <div class="text-center space-y-1">
+                <h2 class="text-lg font-semibold text-slate-200">Generate Digital Tourist ID</h2>
+                <p class="text-xs text-slate-400">Register to activate real-time GPS monitoring and instant SOS response.</p>
+            </div>
+            <form id="regForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1">Full Name</label>
+                    <input type="text" id="regName" required value="John Doe" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1">Passport / Gov ID</label>
+                    <input type="text" id="regId" required value="A12345678" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1">Emergency Contact Phone</label>
+                    <input type="tel" id="regContact" required value="+91-9876543210" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-id-card"></i>
+                    <span>Generate Digital ID</span>
+                </button>
+            </form>
+        </div>
+
+        <!-- Active Safety Dashboard (Hidden by default) -->
+        <div id="dashboardCard" class="hidden flex-col p-6 space-y-5">
+            
+            <!-- Digital ID Badge -->
+            <div class="bg-slate-800/80 border border-slate-700 rounded-2xl p-4 flex items-center space-x-4 shadow-inner">
+                <div class="bg-white p-2 rounded-xl shadow">
+                    <img id="qrCodeImg" class="w-20 h-20" alt="Digital ID QR Code">
+                </div>
+                <div class="space-y-1">
+                    <span class="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Verified Digital ID</span>
+                    <h3 id="displayName" class="text-lg font-bold text-slate-100">---</h3>
+                    <p id="displayId" class="text-xs text-slate-400 font-mono">ID: ---</p>
+                    <span class="inline-flex items-center text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-md font-medium mt-1">
+                        <i class="fa-solid fa-circle-check mr-1"></i> Active Monitoring
+                    </span>
+                </div>
+            </div>
+
+            <!-- Geofence Warning Banner -->
+            <div id="geofenceBanner" class="hidden bg-rose-950/80 border border-rose-600 text-rose-200 px-4 py-3 rounded-xl text-xs flex items-start space-x-3 shadow-lg animate-pulse">
+                <i class="fa-solid fa-triangle-exclamation text-rose-400 text-base mt-0.5"></i>
+                <div>
+                    <span class="font-bold block">WARNING: Restricted Zone</span>
+                    You have entered a designated high-risk area. Monitoring authorities have been alerted.
+                </div>
+            </div>
+
+            <!-- Status Indicator -->
+            <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+                <span>Tracking Mode: <strong id="trackingMode" class="text-blue-400">Initializing...</strong></span>
+                <span class="text-slate-500"><i class="fa-solid fa-crosshairs text-blue-400 mr-1"></i> GPS Active</span>
+            </div>
+
+            <!-- Map Container -->
+            <div class="space-y-2">
+                <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+                    <span>Live Location & Geofence</span>
+                    <span class="text-[11px] text-blue-400"><i class="fa-solid fa-location-dot"></i> Real-time GPS</span>
+                </div>
+                <div id="map" class="w-full h-56 rounded-2xl border border-slate-700 overflow-hidden shadow-md"></div>
+            </div>
+
+            <!-- Emergency SOS Button -->
+            <button id="sosBtn" class="w-full bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white font-bold py-4 rounded-2xl shadow-lg shadow-rose-600/30 transition flex items-center justify-center space-x-3 text-base">
+                <i class="fa-solid fa-bell text-xl animate-bounce"></i>
+                <span>TRANSMIT EMERGENCY SOS</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let touristData = null;
+        let map, userMarker, geofencePolygon;
+
+        // Kolkata Central Default Center
+        let currentLat = 22.5650;
+        let currentLng = 88.3600;
+
+        // Standard Geofence Polygon (Matching Server)
+        const geofenceCoords = [
+            [22.5800, 88.3500],
+            [22.5800, 88.3700],
+            [22.5650, 88.3700],
+            [22.5650, 88.3500]
+        ];
+
+        // Handle Registration
+        document.getElementById('regForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('regName').value;
+            const passportId = document.getElementById('regId').value;
+            const emergencyContact = document.getElementById('regContact').value;
+
+            const res = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, passportId, emergencyContact })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                touristData = {
+                    touristId: data.touristId,
+                    name,
+                    emergencyContact
+                };
+
+                document.getElementById('registrationCard').classList.add('hidden');
+                document.getElementById('dashboardCard').classList.remove('hidden');
+                document.getElementById('dashboardCard').classList.add('flex');
+                
+                document.getElementById('displayName').innerText = name;
+                document.getElementById('displayId').innerText = `ID: ${data.touristId}`;
+                document.getElementById('qrCodeImg').src = data.qrCodeUrl;
+
+                initMap();
+                startGpsTracking();
+            }
+        });
+
+        function initMap() {
+            map = L.map('map').setView([currentLat, currentLng], 14);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            // Draw Geofence Zone
+            geofencePolygon = L.polygon(geofenceCoords, {
+                color: '#ef4444',
+                fillColor: '#f87171',
+                fillOpacity: 0.35
+            }).addTo(map);
+            geofencePolygon.bindPopup("<b>Restricted Geofence Zone</b>");
+
+            // User Location Marker (Draggable fallback enabled)
+            userMarker = L.marker([currentLat, currentLng], { draggable: true }).addTo(map);
+            userMarker.bindPopup("Your Location (Drag to simulate)").openPopup();
+
+            userMarker.on('dragend', function(e) {
+                const pos = userMarker.getLatLng();
+                currentLat = pos.lat;
+                currentLng = pos.lng;
+                document.getElementById('trackingMode').innerText = "Manual Drag Mode";
+                sendLocationUpdate();
+            });
+        }
+
+        function startGpsTracking() {
+            if ("geolocation" in navigator) {
+                document.getElementById('trackingMode').innerText = "Mobile Hardware GPS";
+
+                // Watch device position continuously
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        currentLat = position.coords.latitude;
+                        currentLng = position.coords.longitude;
+
+                        // Smoothly update marker and center map
+                        userMarker.setLatLng([currentLat, currentLng]);
+                        map.setView([currentLat, currentLng], map.getZoom());
+                        userMarker.setPopupContent("Real Device GPS Active");
+
+                        sendLocationUpdate();
+                    },
+                    (error) => {
+                        console.warn("Mobile GPS permission denied or unavailable. Fallback to manual map pin drag.", error);
+                        document.getElementById('trackingMode').innerText = "Manual Drag Mode (GPS Unavailable)";
+                        sendLocationUpdate();
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 5000,
+                        timeout: 10000
+                    }
+                );
+            } else {
+                document.getElementById('trackingMode').innerText = "Manual Drag Mode";
+                sendLocationUpdate();
+            }
+        }
+
+        function sendLocationUpdate() {
+            if (!touristData) return;
+            socket.emit('update-location', {
+                touristId: touristData.touristId,
+                name: touristData.name,
+                emergencyContact: touristData.emergencyContact,
+                lat: currentLat,
+                lng: currentLng
+            });
+        }
+
+        // Handle Geofence Status from Server
+        socket.on('geofence-status', (status) => {
+            const banner = document.getElementById('geofenceBanner');
+            if (status.isInsideRestricted) {
+                banner.classList.remove('hidden');
+            } else {
+                banner.classList.add('hidden');
+            }
+        });
+
+        // Trigger SOS
+        document.getElementById('sosBtn').addEventListener('click', () => {
+            if (!touristData) return;
+            socket.emit('trigger-sos', {
+                touristId: touristData.touristId,
+                name: touristData.name,
+                emergencyContact: touristData.emergencyContact,
+                lat: currentLat,
+                lng: currentLng
+            });
+            alert("EMERGENCY SOS TRANSMITTED! Command Center has received your alert and live coordinates.");
+        });
+    </script>
+</body>
+</html>
