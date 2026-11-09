@@ -1,63 +1,125 @@
 const express = require('express');
-const app = express();
 const http = require('http');
-const server = http.createServer(app);
 const { Server } = require('socket.io');
-const io = new Server(server);
+const QRCode = require('qrcode');
 const turf = require('@turf/turf');
+const path = require('path');
 
-// 1. Serve static files (HTML, CSS, JS, images) from the 'public' folder
-app.use(express.static('public'));
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-// 2. Serve the Tourist Portal directly when visiting the base URL
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/tourist.html');
-});
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Define sample high-risk geofence zones using Turf.js polygons
-// (You can adjust these coordinates to match your target monitoring area)
-const dangerZone = turf.polygon([[
-  [88.35, 22.57], 
-  [88.37, 22.57], 
-  [88.37, 22.59], 
-  [88.35, 22.59], 
-  [88.35, 22.57]
+// In-Memory Data Stores
+let activeTourists = {};
+let activeIncidents = [];
+
+// Geofence Definition (Polygon for High-Risk Zone around Kolkata Central)
+const restrictedGeofence = turf.polygon([[
+    [88.3500, 22.5800],
+    [88.3700, 22.5800],
+    [88.3700, 22.5650],
+    [88.3500, 22.5650],
+    [88.3500, 22.5800]
 ]]);
 
-// 3. Real-Time Socket.io Telemetry & Geofencing Handler
-io.on('connection', (socket) => {
-  console.log(`[SOCKET CONNECTED]: ${socket.id}`);
+// API Route: Register Tourist & Generate Digital Pass
+app.post('/api/register', async (req, res) => {
+    try {
+        const { name, passportId, emergencyContact } = req.body;
+        const touristId = 'TID-' + Math.floor(100000 + Math.random() * 900000);
+        
+        const payload = JSON.stringify({ touristId, name, passportId, emergencyContact });
+        const qrCodeUrl = await QRCode.toDataURL(payload);
 
-  // Handle incoming tourist GPS location updates
-  socket.on('tourist-location', (data) => {
-    if (data && data.lat && data.lng) {
-      // Create a Turf point from tourist coordinates [longitude, latitude]
-      const touristPoint = turf.point([data.lng, data.lat]);
-      
-      // Automated geofence risk evaluation
-      const isHighRisk = turf.booleanPointInPolygon(touristPoint, dangerZone);
-      
-      // Append risk flag to telemetry package
-      data.isHighRisk = isHighRisk;
-
-      // Broadcast the real-time update and risk status to the admin dashboard
-      io.emit('update-admin-map', data);
+        res.json({
+            success: true,
+            touristId,
+            qrCodeUrl,
+            message: 'Digital ID successfully generated and registered.'
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
     }
-  });
-
-  // Handle manual emergency SOS triggers
-  socket.on('sos-alert', (data) => {
-    console.log(`[SOS ALERT]: Emergency triggered by ${socket.id}`);
-    io.emit('broadcast-sos', data);
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`[SOCKET DISCONNECTED]: ${socket.id}`);
-  });
 });
 
-// 4. Bind to Render's dynamic environment port or default to 3000 locally
+// Real-Time Socket Connections
+io.on('connection', (socket) => {
+    console.log(`[SOCKET CONNECTED]: ${socket.id}`);
+
+    // Update Location Handler
+    socket.on('update-location', (data) => {
+        const { touristId, name, emergencyContact, lat, lng } = data;
+        const point = turf.point([lng, lat]);
+        const isInsideRestricted = turf.booleanPointInPolygon(point, restrictedGeofence);
+        
+        // Risk Intelligence Scoring
+        let riskScore = 15; // Base safe score
+        let status = 'Safe Corridor';
+
+        if (isInsideRestricted) {
+            riskScore = 85;
+            status = 'RESTRICTED ZONE BREACH';
+        }
+
+        activeTourists[touristId] = {
+            socketId: socket.id,
+            touristId,
+            name,
+            emergencyContact,
+            lat,
+            lng,
+            riskScore,
+            status,
+            isInsideRestricted,
+            lastUpdated: new Date().toLocaleTimeString()
+        };
+
+        // Notify client if breach occurs
+        socket.emit('geofence-status', {
+            isInsideRestricted,
+            riskScore,
+            status
+        });
+
+        // Broadcast active system state to Admin Command Center
+        io.emit('admin-feed-update', Object.values(activeTourists));
+    });
+
+    // Emergency SOS Trigger
+    socket.on('trigger-sos', (data) => {
+        const { touristId, name, emergencyContact, lat, lng } = data;
+        const incident = {
+            id: 'INC-' + Date.now(),
+            touristId,
+            name,
+            emergencyContact,
+            lat,
+            lng,
+            timestamp: new Date().toLocaleTimeString()
+        };
+        activeIncidents.unshift(incident);
+
+        // Instant Broadcast Emergency Incident to all admins
+        io.emit('emergency-alert', incident);
+    });
+
+    socket.on('disconnect', () => {
+        // Clean up tracking on disconnect
+        for (let id in activeTourists) {
+            if (activeTourists[id].socketId === socket.id) {
+                delete activeTourists[id];
+                break;
+            }
+        }
+        io.emit('admin-feed-update', Object.values(activeTourists));
+        console.log(`[SOCKET DISCONNECTED]: ${socket.id}`);
+    });
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`[SYSTEM READY]: SafeTravel AI running on port ${PORT}`);
+    console.log(`[SYSTEM READY]: SafeTravel AI running on http://localhost:${PORT}`);
 });
